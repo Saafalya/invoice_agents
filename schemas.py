@@ -1,5 +1,5 @@
 """Structured data the agents pass around."""
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -22,3 +22,4 @@ class InvoiceExtract(BaseModel):
     tax: float
     tax_rate: float      # fraction, e.g. 0.18
     total: float
+    bank_account: Optional[str] = None   # account the vendor asks to be paid into

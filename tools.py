@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from difflib import SequenceMatcher
 
-from config import (ALWAYS_ESCALATE, APPROVED, ESCALATED, ESCALATE_AT_RISK, HOLD,
-                    PRICE_TOLERANCE, TAX_RATE, VARIANCE_TOLERANCE)
+from config import (ALWAYS_ESCALATE, APPROVED, ESCALATED, ESCALATE_AT_RISK, FRAUD_ESCALATE_SCORE,
+                    HOLD, LOOKALIKE_SIMILARITY, PRICE_TOLERANCE, RISK_WEIGHTS, SPIKE_FACTOR,
+                    SPIKE_MIN_HISTORY, TAX_RATE, VARIANCE_TOLERANCE)
 from schemas import InvoiceExtract, LineItem
 
 
@@ -36,6 +38,7 @@ def parse_invoice(text: str, robust: bool = True) -> InvoiceExtract:
     if not lines:
         raise ValueError("no line items found")
     tax_m = grab(rf"^Tax \((\d+)%\):\s*({num})")
+    bank_m = re.search(r"^Bank A/C:\s*(\S+)", text, re.M)
     return InvoiceExtract(
         invoice_no=grab(r"^Invoice No:\s*(\S+)").group(1),
         vendor=grab(r"^Vendor:\s*(.+)$").group(1).strip(),
@@ -47,6 +50,7 @@ def parse_invoice(text: str, robust: bool = True) -> InvoiceExtract:
         tax=to_f(tax_m.group(2)),
         tax_rate=int(tax_m.group(1)) / 100,
         total=to_f(grab(rf"^Total:\s*({num})").group(1)),
+        bank_account=bank_m.group(1) if bank_m else None,
     )
 
 
@@ -129,7 +133,51 @@ def three_way_match(inv: InvoiceExtract, vendors, po_db, grn_db, seen: set):
     return issues, expected_total, at_risk
 
 
-def decide(issues: list, at_risk: float, extract_ok: bool):
+# --------------------------------------------------------------------------- fraud signals
+def closest_vendor(name: str, vendors) -> tuple[str, float]:
+    """Most similar approved vendor name and its similarity (0-1)."""
+    scored = [(v, SequenceMatcher(None, name.lower(), v.lower()).ratio()) for v in vendors]
+    return max(scored, key=lambda x: x[1]) if scored else ("", 0.0)
+
+
+def fraud_checks(inv: InvoiceExtract, issues: list, vendors, memory):
+    """Signals a three-way match cannot see. Returns (new_issues, signals, risk_score).
+
+    `signals` lists every point added to the score, so the reviewer sees why it is high.
+    """
+    new, signals = [], []
+
+    def add(kind, detail):
+        new.append({"type": kind, "detail": detail})
+
+    if inv.vendor not in vendors:
+        match, sim = closest_vendor(inv.vendor, vendors)
+        if sim >= LOOKALIKE_SIMILARITY:
+            add("LOOKALIKE_VENDOR", f"'{inv.vendor}' is {sim:.0%} similar to approved vendor "
+                                    f"'{match}': possible impersonation")
+    profile = memory.profile(inv.vendor)
+    if profile and inv.bank_account and inv.bank_account != profile["bank"]:
+        add("BANK_CHANGE", f"pay-to account {inv.bank_account} differs from account on file "
+                           f"{profile['bank']}")
+    st = memory.stats(inv.vendor)
+    if st and st[0] >= SPIKE_MIN_HISTORY and inv.total > SPIKE_FACTOR * st[2]:
+        n, _avg, biggest = st
+        add("AMOUNT_SPIKE", f"total {inv.total:,.2f} is {inv.total / biggest:.1f}x the largest of this "
+                            f"vendor's {n} past approved invoices ({biggest:,.2f})")
+    if inv.total >= 1000 and inv.total % 1000 == 0:
+        signals.append(("ROUND_AMOUNT", RISK_WEIGHTS["ROUND_AMOUNT"], "suspiciously round total"))
+
+    for i in issues + new:
+        if i["type"] in RISK_WEIGHTS:
+            signals.append((i["type"], RISK_WEIGHTS[i["type"]], i["detail"]))
+    hist = memory.history_points(inv.vendor)
+    if hist:
+        signals.append(("VENDOR_HISTORY", hist, "vendor's past invoices were often escalated"))
+    score = min(100, sum(pts for _, pts, _ in signals))
+    return new, signals, score
+
+
+def decide(issues: list, at_risk: float, extract_ok: bool, risk_score: int = 0):
     """Business rules for the Decision Agent. Returns (decision, rule_that_fired)."""
     if not extract_ok:
         return ESCALATED, "extraction could not be validated"
@@ -138,6 +186,8 @@ def decide(issues: list, at_risk: float, extract_ok: bool):
         return APPROVED, "no issues"
     if types & ALWAYS_ESCALATE:
         return ESCALATED, "fraud / control risk: " + ", ".join(sorted(types & ALWAYS_ESCALATE))
+    if risk_score >= FRAUD_ESCALATE_SCORE:
+        return ESCALATED, f"fraud risk score {risk_score} >= {FRAUD_ESCALATE_SCORE}"
     if at_risk >= ESCALATE_AT_RISK:
         return ESCALATED, f"amount at risk >= {ESCALATE_AT_RISK:,.0f}"
     return HOLD, "low-value mismatch: return to vendor for correction"

@@ -1,5 +1,8 @@
-streamlit>=1.35
+streamlit>=1.50
 pandas>=2.0
 pydantic>=2.0
-langgraph>=0.2
+langgraph>=0.4          # interrupt + checkpointer for human-in-the-loop
 langchain-ollama>=0.2   # only needed for the Ollama backend
+pdfplumber>=0.10        # read uploaded PDF invoices
+reportlab>=4.0          # render sample invoice PDFs
+pytest>=8.0             # tests (pytest)

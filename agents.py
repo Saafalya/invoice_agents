@@ -1,11 +1,15 @@
-"""The five agents. Each node takes (state, ctx) and returns a partial state update."""
+"""The agents. Each node takes (state, ctx) and returns a partial state update."""
 from __future__ import annotations
 
-from config import MAX_EXTRACT_ATTEMPTS, URGENT_DAYS, VARIANCE_TOLERANCE
-from tools import decide, parse_invoice, peek_header, three_way_match, validate_extraction
+from config import (APPROVED, ESCALATED, HOLD, MAX_EXTRACT_ATTEMPTS, REJECTED, URGENT_DAYS,
+                    VARIANCE_TOLERANCE)
+from tools import (decide, fraud_checks, parse_invoice, peek_header, three_way_match,
+                   validate_extraction)
 
 EXPLAINED_BY = {"PRICE_MISMATCH", "QTY_EXCESS", "TAX_ERROR", "UNORDERED_ITEM", "DUPLICATE",
-                "NO_PO", "UNKNOWN_VENDOR", "VENDOR_MISMATCH"}
+                "NO_PO", "UNKNOWN_VENDOR", "VENDOR_MISMATCH", "LOOKALIKE_VENDOR"}
+WHOLE_PAYMENT_AT_RISK = {"LOOKALIKE_VENDOR", "BANK_CHANGE"}
+REVIEW_ACTIONS = {"APPROVE": APPROVED, "REJECT": REJECTED, "HOLD": HOLD}
 
 
 def _log(agent: str, msg: str) -> dict:
@@ -53,6 +57,8 @@ def extractor_agent(state, ctx):
 def critic_extract_agent(state, ctx):
     name, ext = "Critic Agent", state.get("extract")
     problems = ["extraction produced no result"] if ext is None else validate_extraction(ext)
+    if ext is not None and f"{ext.total:,.2f}" not in state["raw"] and f"{ext.total:.2f}" not in state["raw"]:
+        problems.append(f"extracted total {ext.total:,.2f} does not appear in the document")
     if not problems:
         return {"extract_ok": True, "critic_issues": [],
                 "log": [_log(name, "extraction PASSED arithmetic and format checks")]}
@@ -79,6 +85,21 @@ def matcher_agent(state, ctx):
             "log": [_log("Matching Agent", f"3-way match done -> {msg}")]}
 
 
+# --------------------------------------------------------------------------- Fraud Agent
+def fraud_agent(state, ctx):
+    """Looks for fraud a three-way match cannot see, using the vendor memory."""
+    inv, issues = state["extract"], list(state["issues"])
+    new, signals, score = fraud_checks(inv, issues, ctx.vendors, ctx.memory)
+    at_risk = state["at_risk"]
+    if {i["type"] for i in new} & WHOLE_PAYMENT_AT_RISK:
+        at_risk = inv.total
+    found = ", ".join(i["type"] for i in new) or "no fraud signals"
+    return {"issues": issues + new, "risk_score": score,
+            "risk_signals": [{"signal": k, "points": p, "detail": d} for k, p, d in signals],
+            "at_risk": at_risk,
+            "log": [_log("Fraud Agent", f"{found}; risk score {score}/100")]}
+
+
 # --------------------------------------------------------------------------- Critic Agent (2)
 def critic_match_agent(state, ctx):
     """Cross-check: any money variance must be explained by at least one named issue."""
@@ -98,10 +119,52 @@ def critic_match_agent(state, ctx):
 def decision_agent(state, ctx):
     ext, issues = state.get("extract"), state.get("issues", [])
     at_risk = state.get("at_risk", ext.total if ext else 0.0)
-    decision, rule = decide(issues, at_risk, state.get("extract_ok", False))
+    decision, rule = decide(issues, at_risk, state.get("extract_ok", False), state.get("risk_score", 0))
     reason = ctx.llm.explain({
         "decision": decision, "issues": issues, "at_risk": at_risk,
         "invoice_no": ext.invoice_no if ext else "?", "total": ext.total if ext else 0.0,
     })
     return {"decision": decision, "reason": reason, "at_risk": at_risk,
             "log": [_log("Decision Agent", f"{decision} ({rule})")]}
+
+
+# --------------------------------------------------------------------------- Human Review (HITL)
+def needs_human(state, ctx) -> bool:
+    return bool(ctx.hitl) and state.get("decision") == ESCALATED
+
+
+def review_request(state) -> dict:
+    """What the reviewer sees when the graph pauses."""
+    ext = state.get("extract")
+    return {"invoice_no": ext.invoice_no if ext else "(unreadable)",
+            "vendor": ext.vendor if ext else "(unreadable)", "total": ext.total if ext else 0.0,
+            "reason": state.get("reason", ""), "issues": state.get("issues", []),
+            "risk_score": state.get("risk_score", 0)}
+
+
+def human_review_agent(state, ctx):
+    """Pauses escalated invoices for a person, then writes the outcome to vendor memory.
+
+    In LangGraph mode `ctx.ask_human` is `langgraph.types.interrupt`: the graph checkpoints and
+    stops here, and resumes when the reviewer answers. LangGraph re-runs this node on resume,
+    so nothing with side effects happens before the answer is in.
+    """
+    ext, decision = state.get("extract"), state["decision"]
+    answer = None
+    if needs_human(state, ctx):
+        answer = ctx.ask_human(review_request(state), state)
+        final, by = REVIEW_ACTIONS[answer["action"]], answer.get("reviewer") or "reviewer"
+        note = f" - \"{answer['note']}\"" if answer.get("note") else ""
+        msg = f"{by} reviewed: {answer['action']} -> {final}{note}"
+    else:
+        final, by = decision, "auto"
+        msg = f"no review needed -> {final}"
+    if ext is not None:
+        ctx.memory.record(ext.vendor, ext.total, decision, final)
+        types = {i["type"] for i in state.get("issues", [])}
+        if answer and final == APPROVED and "BANK_CHANGE" in types:
+            ctx.memory.accept_bank(ext.vendor, ext.bank_account)
+            msg += "; new bank account saved to vendor memory"
+    return {"final_decision": final, "reviewed_by": by,
+            "review_note": (answer or {}).get("note", ""),
+            "log": [_log("Human Review", msg)]}

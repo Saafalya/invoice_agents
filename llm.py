@@ -43,7 +43,8 @@ class OllamaLLM:
         prompt = (
             "Extract this invoice into JSON with exactly these keys: invoice_no, vendor, "
             "po_number, invoice_date, due_date, subtotal, tax, tax_rate (percent, e.g. 18), "
-            "total, lines (list of {sku, description, qty, unit_price, amount}). "
+            "total, bank_account (pay-to account number, or null), "
+            "lines (list of {sku, description, qty, unit_price, amount}). "
             "Use plain numbers without thousands separators. Return JSON only.\n\nINVOICE:\n" + text
         )
         try:
