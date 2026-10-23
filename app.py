@@ -123,6 +123,8 @@ def show_invoice(r):
         if r.get("risk_note"):
             b.warning(f"Fraud Agent: {r['risk_note']}")
         b.dataframe(pd.DataFrame(r["risk_signals"]), width="stretch", hide_index=True)
+    if r.get("llm_review"):
+        b.caption("Critic Agent (LLM second opinion): " + "; ".join(r["llm_review"]))
     b.markdown("**Agent trace**")
     b.code("\n".join(f"{e['agent']}: {e['msg']}" for e in r["trace"]), language=None)
     with st.expander("Extracted data (validated schema)", expanded=False):

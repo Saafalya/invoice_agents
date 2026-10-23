@@ -49,6 +49,9 @@ class MockLLM:
     def explain_risk(self, payload: dict) -> str:
         return template_risk_note(payload)
 
+    def review_extraction(self, text: str, ext) -> list:
+        return []                              # no LLM: the Critic relies on its rule checks
+
 
 class OllamaLLM:
     can_extract = True
@@ -106,6 +109,39 @@ class OllamaLLM:
             return out
         except Exception:
             return facts
+
+    def review_extraction(self, text: str, ext) -> list:
+        """Second opinion: does the extracted data match the invoice? Returns short complaints."""
+        prompt = (
+            "You check invoice data extraction. Compare the EXTRACTED JSON with the INVOICE text. "
+            "Look for values in the wrong field (for example invoice number and PO number swapped), "
+            "wrong vendor, wrong bank account, or missing line items. Ignore number formatting. "
+            'Reply with JSON only: {"ok": true} or {"ok": false, "problems": '
+            '[{"field": "<json key>", "issue": "<short reason>"}]}.\n\n'
+            f"INVOICE:\n{text}\n\nEXTRACTED:\n{ext.model_dump_json()}"
+        )
+        try:
+            return parse_review(self.json_chat.invoke(prompt).content)
+        except Exception:
+            return []                          # model down or slow: rule checks still apply
+
+
+FIELDS = set(InvoiceExtract.model_fields)
+
+
+def parse_review(content: str) -> list:
+    """Keep only well-formed complaints about real fields; anything else is ignored."""
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, dict) or data.get("ok") is True:
+        return []
+    out = []
+    for p in data.get("problems") or []:
+        if isinstance(p, dict) and p.get("field") in FIELDS and str(p.get("issue", "")).strip():
+            out.append(f"{p['field']}: {str(p['issue']).strip()[:160]}")
+    return out[:3]
 
 
 def get_llm(engine: str, model: str = "llama3.2"):

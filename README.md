@@ -21,7 +21,10 @@ human in the loop for risky invoices and a vendor memory that learns from every 
   bank change once, and that vendor's next invoice to the new account is not flagged.
 - **PDF upload:** run the agents on real PDF invoices. Download a sample PDF from the app to try it;
   re-uploading an invoice that was already processed is caught as a duplicate.
-- **Tests:** `pytest` runs 15 end-to-end checks of the pipeline, fraud rules, pause/resume and PDF handling.
+- **Ollama in more agents:** the Fraud Agent writes a plain-language risk note (numbers it invents are
+  rejected), and the Critic gets a second opinion from the model. The Critic also checks every key field
+  appears in the document. A model's doubt triggers a retry but never escalates an invoice on its own.
+- **Tests:** `pytest` runs 20 end-to-end checks of the pipeline, fraud rules, pause/resume and PDF handling.
 
 ## Run it
 

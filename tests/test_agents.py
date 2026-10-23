@@ -114,3 +114,40 @@ def test_risk_note_guard_rejects_invented_numbers():
     facts = "Risk 70/100 for Acme: pay-to account 1234 differs from 9876 (+70)."
     assert not adds_numbers("Bank account changed from 9876 to 1234; call Acme first.", facts)
     assert adds_numbers("Acme has sent 5 risky invoices worth 2,50,000.", facts)
+
+
+def test_critic_rejects_invented_field_values():
+    from tools import grounding_problems
+    b = generate_batch(24, 0.35, 42)
+    raw = b.invoices[0]["text"]
+    ctx = Ctx(MockLLM(), b.vendors, b.po_db, b.grn_db, b.today)
+    res = process_one(raw, ctx, use_langgraph=False)
+    ext = InvoiceExtract(**res["extract"])
+    assert grounding_problems(ext, raw) == []
+    fake = ext.model_copy(update={"vendor": "Imaginary Traders", "bank_account": "999"})
+    assert len(grounding_problems(fake, raw)) == 2
+
+
+class NervousLLM(MockLLM):
+    """A model that doubts every extraction."""
+    def review_extraction(self, text, ext):
+        return ["po_number: looks wrong"]
+
+
+def test_llm_doubt_retries_but_never_escalates_on_its_own():
+    b = generate_batch(24, 0.35, 42)
+    ctx = Ctx(NervousLLM(), b.vendors, b.po_db, b.grn_db, b.today)
+    res = [e["result"] for e in process_batch(b, ctx, use_langgraph=False) if e["type"] == "result"]
+    m = evaluate(res)
+    assert m["caught"] == m["seeded"] and m["false_positives"] == 0
+    assert all(r["attempts"] == 2 for r in res)                    # each doubt caused one retry
+    assert all(r["llm_review"] for r in res if r["extract"])       # notes kept for the reviewer
+
+
+def test_llm_review_ignores_malformed_answers():
+    from llm import parse_review
+    assert parse_review('{"ok": true}') == []
+    assert parse_review("not json") == []
+    assert parse_review('{"ok": false, "problems": [{"field": "colour", "issue": "x"}]}') == []
+    assert parse_review('{"ok": false, "problems": [{"field": "po_number", "issue": "swapped"}]}') \
+        == ["po_number: swapped"]
