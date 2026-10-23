@@ -36,7 +36,9 @@ No LLM is needed: the default **Mock** backend is rule-based. To use a local mod
 ```bash
 ollama pull llama3.2        # or qwen2.5:3b on a low-RAM laptop
 ```
-then pick "Ollama (local model)" in the sidebar. If Ollama is unreachable the app falls back to the mock.
+then pick "Ollama (local model)" in the sidebar.
+Not sure your laptop can run it? `python check_ollama.py` shows your RAM, whether Ollama is running,
+which models you have, and which model to use. If Ollama is unreachable the app falls back to the mock.
 
 Headless check (no UI): `python run_cli.py --verbose` (add `--ollama llama3.2` to use a model,
 `--hitl` to review escalations yourself, `--memory vendor_memory.json` to keep the vendor memory).
