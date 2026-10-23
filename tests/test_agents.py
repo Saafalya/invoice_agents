@@ -151,3 +151,27 @@ def test_llm_review_ignores_malformed_answers():
     assert parse_review('{"ok": false, "problems": [{"field": "colour", "issue": "x"}]}') == []
     assert parse_review('{"ok": false, "problems": [{"field": "po_number", "issue": "swapped"}]}') \
         == ["po_number: swapped"]
+
+
+def test_escalated_invoices_get_a_case_summary():
+    _, _, res = run()
+    for r in res:
+        if r["decision"] == "ESCALATED":
+            s = r["case_summary"]
+            assert s.startswith("Problem:") and "Stake:" in s and "Check before deciding:" in s
+        else:
+            assert r["case_summary"] == ""
+    bank = next(r for r in res if r["truth"]["kind"] == "BANK_CHANGE")
+    assert "vendor master" in bank["case_summary"]          # tells the reviewer how to verify
+
+
+def test_case_summary_falls_back_when_llm_invents_numbers():
+    from types import SimpleNamespace as N
+    from llm import OllamaLLM, template_case_summary
+    p = {"issues": [{"type": "DUPLICATE", "detail": "INV-1 already processed"}], "at_risk": 500.0,
+         "total": 500.0, "risk_score": 30, "history": None}
+    o = OllamaLLM.__new__(OllamaLLM)
+    o.chat = N(invoke=lambda _: N(content="Problem: paid twice for 9,999."))
+    assert o.summarize_case(p) == template_case_summary(p)
+    o.chat = N(invoke=lambda _: N(content="Problem: duplicate of INV-1.\nStake: 500.00\nCheck: was it paid?"))
+    assert o.summarize_case(p).startswith("Problem: duplicate")

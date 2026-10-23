@@ -24,7 +24,9 @@ human in the loop for risky invoices and a vendor memory that learns from every 
 - **Ollama in more agents:** the Fraud Agent writes a plain-language risk note (numbers it invents are
   rejected), and the Critic gets a second opinion from the model. The Critic also checks every key field
   appears in the document. A model's doubt triggers a retry but never escalates an invoice on its own.
-- **Tests:** `pytest` runs 20 end-to-end checks of the pipeline, fraud rules, pause/resume and PDF handling.
+- **Case summary for reviewers:** every escalated invoice gets a brief (problem, money at stake, vendor
+  history, what to verify) written by the model, with the same no-new-numbers guard.
+- **Tests:** `pytest` runs 22 end-to-end checks of the pipeline, fraud rules, pause/resume and PDF handling.
 
 ## Run it
 

@@ -262,6 +262,8 @@ with tab_review:
         with st.container(border=True):
             st.markdown(f"### {r['invoice_no']} - {r['vendor']} - INR {r['total']:,.2f}  "
                         f"(risk {r['risk_score']}/100)")
+            if r.get("case_summary"):
+                st.info("Case summary: " + r["case_summary"])
             show_invoice(r)
             note = st.text_input("Note for the audit trail", key=f"note-{name}-{i}")
             cols = st.columns(3)
