@@ -97,7 +97,7 @@ with the robust parser. Watch for "REJECTED ... retry" lines in the live trace.
 | File | Purpose |
 |---|---|
 | `app.py` | Streamlit UI: run agents, live trace, review queue, results, architecture |
-| `ui.py`, `.streamlit/config.toml` | Look and feel: theme, decision stamps, risk meter, agent pipeline strip |
+| `ui.py`, `.streamlit/config.toml`, `static/fonts/` | Look and feel: ledger-paper theme, rubber stamps, payment vouchers, routing slip; bundled fonts (OFL) |
 | `orchestrator.py` | LangGraph graph with checkpointer (plus a plain-Python fallback), pause/resume, batch runner, evaluation |
 | `agents.py` | The agents, including Fraud and Human Review |
 | `tools.py` | Parsing, validation, three-way match, fraud checks, decision rules |

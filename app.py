@@ -17,7 +17,7 @@ from memory import VendorMemory
 from orchestrator import HAS_LANGGRAPH, Ctx, evaluate, finish_review, process_batch, process_one
 from pdf_tools import invoice_to_pdf, pdf_to_text
 
-st.set_page_config(page_title="Invoice check", page_icon="🧾", layout="wide")
+st.set_page_config(page_title="Invoice register", page_icon="🧾", layout="wide")
 ui.inject()
 
 PENDING = "PENDING REVIEW"
@@ -156,7 +156,7 @@ def show_invoice(r, key=""):
 # --------------------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown("### Settings")
-    with st.expander(":material/smart_toy: AI model", expanded=True):
+    with st.expander("AI model", expanded=True):
         engine = st.radio("Engine", ["Mock (no setup needed)", "Ollama (local model)"],
                           label_visibility="collapsed")
         model = st.text_input("Ollama model", "llama3.2") if engine.startswith("Ollama") else ""
@@ -165,17 +165,17 @@ with st.sidebar:
             st.caption("langgraph is not installed, using the built-in runner (same workflow).")
         delay = st.slider("Animation speed (s per step)", 0.0, 0.5, 0.08, 0.02)
 
-    with st.expander(":material/receipt_long: Invoice batch"):
+    with st.expander("Invoice batch"):
         n_inv = st.slider("Invoices in batch", 10, 60, 24)
         err_pct = st.slider("Share with seeded errors", 0.10, 0.60, 0.35, 0.05)
         seed = st.number_input("Random seed", 0, 9999, 42)
         regenerate = st.button("Generate new batch", width="stretch")
 
-    with st.expander(":material/person_check: Human review", expanded=True):
+    with st.expander("Human review", expanded=True):
         hitl = st.toggle("Pause escalated invoices for a reviewer", value=True)
         reviewer = st.text_input("Your name (for the audit trail)", "Finance reviewer")
 
-    with st.expander(":material/storefront: Vendor memory"):
+    with st.expander("Vendor memory"):
         persist = st.toggle(f"Remember vendors across sessions", value=False,
                             help=f"Saves to {MEMORY_FILE}")
         memory = get_memory(persist)
@@ -183,7 +183,7 @@ with st.sidebar:
             memory.vendors = {}
             memory.save()
 
-    with st.expander(":material/schedule: Time-saving assumptions"):
+    with st.expander("Time-saving assumptions"):
         manual_min = st.number_input("Manual review, min per invoice", 1.0, 30.0, 6.0, 0.5)
         review_min = st.number_input("Review of a flagged invoice, min", 1.0, 30.0, 4.0, 0.5)
 
@@ -197,36 +197,36 @@ memory.seed(batch.history, batch.bank_db)
 
 n_pending = sum(r["status"] == "PENDING_REVIEW"
                 for r in st.session_state.get("results", []) + st.session_state.get("uploads", []))
-ui.header(engine, model, len(batch.invoices), n_pending)
+ui.header(engine, model, int(seed), batch.today.strftime("%d %b %Y"), n_pending)
 
 tab_run, tab_review, tab_results, tab_upload, tab_memory, tab_arch = st.tabs([
-    ":material/play_circle: Run", f":material/gavel: Review queue ({n_pending})",
-    ":material/insights: Results", ":material/upload_file: Upload PDF",
-    ":material/storefront: Vendor memory", ":material/account_tree: How it works"])
+    "Batch", f"Review queue ({n_pending})", "Results", "Upload PDF", "Vendor ledger", "How it works"])
 
 # --------------------------------------------------------------------------- tab: run
 with tab_run:
-    k = st.columns(4)
-    k[0].metric("Invoices waiting", len(batch.invoices), border=True)
-    k[1].metric("Total value (INR)", f"{sum(i['truth']['total'] for i in batch.invoices):,.0f}", border=True)
-    k[2].metric("Vendors", len({i['truth']['vendor'] for i in batch.invoices}), border=True)
-    k[3].metric("Purchase orders on file", len(batch.po_db), border=True)
+    st.markdown(ui.footing([
+        ("Control totals", "This batch"),
+        ("Invoices", len(batch.invoices)),
+        ("Vendors", len({i['truth']['vendor'] for i in batch.invoices})),
+        ("Purchase orders", len(batch.po_db)),
+        ("Value (INR)", f"{sum(i['truth']['total'] for i in batch.invoices):,.2f}"),
+    ]), unsafe_allow_html=True)
 
     left, right = st.columns([3, 1], vertical_alignment="center")
     left.markdown("Each invoice must match its **purchase order** (what we ordered) and **goods receipt** "
                   "(what arrived) before it is paid. Some invoices in this batch hide errors and fraud.")
-    run = right.button("Check all invoices", type="primary", icon=":material/play_arrow:", width="stretch")
+    run = right.button("Check this batch", type="primary", width="stretch")
     pipe_box = st.empty()
     pipe_box.markdown(ui.pipeline(), unsafe_allow_html=True)
 
     if run:
         llm, warn = get_llm("ollama" if engine.startswith("Ollama") else "mock", model)
         if warn:
-            st.warning(warn, icon=":material/warning:")
+            st.warning(warn)
         ctx = st.session_state.ctx = new_ctx(llm, batch, hitl)
         st.session_state.uploads = []
         total = len(batch.invoices)
-        bar = st.progress(0.0, text="Planner Agent is sorting the batch by due date...")
+        bar = st.progress(0.0, text="Planner Agent is sorting the batch by due date")
         c1, c2 = st.columns([3, 2])
         c1.markdown("**Live agent trace**")
         trace_box = c1.empty()
@@ -263,11 +263,10 @@ with tab_run:
         pipe_box.markdown(ui.pipeline(None, set(ui.AGENTS)), unsafe_allow_html=True)
         waiting = sum(r["status"] == "PENDING_REVIEW" for r in results)
         if waiting:
-            st.success(f"Done. {waiting} invoice(s) need your decision in the Review queue.",
-                       icon=":material/gavel:")
+            st.success(f"Batch checked. {waiting} voucher(s) are waiting for your decision in the Review queue.")
             st.button("Update the review count")   # rerun so the tab label shows the count
         else:
-            st.success("Done. See the Results tab.", icon=":material/check_circle:")
+            st.success("Batch checked. Every invoice was decided; see Results.")
 
     with st.expander("See the incoming invoices and the data the agents use"):
         reveal = st.toggle("Show the answer key (seeded errors)")
@@ -299,27 +298,27 @@ with tab_review:
     elif lists["results"]:
         st.markdown(ui.empty("All caught up. Nothing is waiting for a decision."), unsafe_allow_html=True)
     else:
-        st.markdown(ui.empty("Nothing to review yet. Go to Run and click 'Check all invoices'. "
-                             "Escalated invoices land here."), unsafe_allow_html=True)
+        st.markdown(ui.empty("Nothing to review yet. Open the Batch tab and click 'Check this batch'. "
+                             "Escalated invoices arrive here as payment vouchers."), unsafe_allow_html=True)
     for name, i, r in sorted(queue, key=lambda q: -q[2]["risk_score"]):
-        with st.container(border=True):
-            st.markdown(ui.case_head(r, r["decision"]), unsafe_allow_html=True)
+        with st.container(key=f"voucher-{name}-{i}"):
+            st.markdown(ui.voucher_head(r), unsafe_allow_html=True)
             if r.get("case_summary"):
                 st.markdown(ui.brief(r["case_summary"]), unsafe_allow_html=True)
             with st.expander("Details: findings, invoice, agent trace"):
                 show_invoice(r)
-            note = st.text_input("Note for the audit trail (optional)", key=f"note-{name}-{i}",
-                                 placeholder="e.g. Called vendor, bank change confirmed")
+            note = st.text_input("Remarks for the audit trail (optional)", key=f"note-{name}-{i}",
+                                 placeholder="e.g. Called vendor on master-file number, bank change confirmed")
             cols = st.columns(3)
             # Equal weight on purpose: highlighting "Approve" would nudge reviewers to pay risky invoices.
-            buttons = (("APPROVE", "Approve payment", ":material/check_circle:", "secondary"),
-                       ("HOLD", "Hold for vendor", ":material/pause_circle:", "secondary"),
-                       ("REJECT", "Reject", ":material/block:", "secondary"))
-            for col, (action, text, icon, kind) in zip(cols, buttons):
-                if col.button(text, key=f"{action}-{name}-{i}", icon=icon, type=kind, width="stretch"):
+            buttons = (("APPROVE", "Pass for payment", "passed for payment"),
+                       ("HOLD", "Put on hold", "put on hold"),
+                       ("REJECT", "Reject", "rejected"))
+            for col, (action, text, done_text) in zip(cols, buttons):
+                if col.button(text, key=f"{action}-{name}-{i}", width="stretch"):
                     answer = {"action": action, "note": note, "reviewer": reviewer}
                     st.session_state[name][i] = finish_review(r, answer, ctx)
-                    st.toast(f"{r['invoice_no']}: {text.lower()} recorded", icon=icon)
+                    st.toast(f"{r['invoice_no']} {done_text}")
                     st.rerun()
 
     done = [r for rs in lists.values() for r in rs if r["reviewed_by"] not in ("", "auto")]
@@ -334,48 +333,43 @@ with tab_review:
 with tab_results:
     res = st.session_state.get("results")
     if not res:
-        st.markdown(ui.empty("No results yet. Go to Run and click 'Check all invoices'."),
+        st.markdown(ui.empty("No results yet. Open the Batch tab and click 'Check this batch'."),
                     unsafe_allow_html=True)
     else:
         m = evaluate(res)
         counts = Counter(final(r) for r in res)
-        st.caption(f"Engine: {st.session_state.engine_name}")
-
-        c = st.columns(5)
-        for col, key in zip(c, (APPROVED, HOLD, ESCALATED, REJECTED, PENDING)):
-            col.metric(label(key), counts.get(key, 0), border=True)
-
-        st.markdown("#### How well did the agents do?")
-        v = st.columns(4)
-        v[0].metric("Seeded errors caught", f"{m['caught']}/{m['seeded']}", f"{m['recall']:.0%} recall",
-                    delta_color="off", border=True)
-        v[1].metric("Fraud cases escalated", f"{m['fraud_caught']}/{m['fraud_seeded']}", border=True,
-                    help="Lookalike vendor, bank-account change and amount spike, seeded in the batch")
-        v[2].metric("Clean invoices wrongly flagged", f"{m['false_positives']}/{m['clean']}", border=True)
-        v[3].metric("Bad extractions fixed by the Critic", f"{m['recovered_by_retry']}/{m['retried']}",
-                    border=True)
-
-        st.markdown("#### Money and time")
         flagged = m["n"] - sum(r["decision"] == APPROVED for r in res)
         manual_total = m["n"] * manual_min
         assisted = st.session_state.proc_seconds / 60 + flagged * review_min
         saved = manual_total - assisted
-        w = st.columns(4)
-        w[0].metric("Payments stopped (INR)", f"{m['blocked_value']:,.0f}", border=True)
-        w[1].metric("Overpayment caught (INR)", f"{m['detected_at_risk']:,.0f}",
-                    f"seeded: {m['true_at_risk']:,.0f}", delta_color="off", border=True)
-        w[2].metric("Manual effort (min)", f"{manual_total:,.0f}", border=True)
-        w[3].metric("With agents (min)", f"{assisted:,.0f}",
-                    f"{saved / manual_total:.0%} saved" if manual_total else None, delta_color="off",
-                    border=True)
-        st.caption("Effort figures are estimates from the sidebar assumptions. Agent compute time is "
-                   "measured (animation excluded); people only review flagged invoices.")
+
+        c1, c2, c3 = st.columns(3, gap="large")
+        c1.markdown(ui.ledger([(label(k), counts.get(k, 0)) for k in (APPROVED, HOLD, ESCALATED, REJECTED, PENDING)]
+                              + [("=Total invoices", m["n"])], "Batch summary", ("Status", "Invoices")),
+                    unsafe_allow_html=True)
+        c2.markdown(ui.ledger([
+            ("Seeded errors caught", f"{m['caught']}/{m['seeded']}", f"{m['recall']:.0%}"),
+            ("Fraud cases escalated", f"{m['fraud_caught']}/{m['fraud_seeded']}"),
+            ("Clean invoices wrongly flagged", f"{m['false_positives']}/{m['clean']}"),
+            ("Bad readings fixed by the Critic", f"{m['recovered_by_retry']}/{m['retried']}"),
+        ], "Audit check against the answer key", ("Test", "Result")), unsafe_allow_html=True)
+        c3.markdown(ui.ledger([
+            ("Payments stopped (INR)", f"{m['blocked_value']:,.2f}"),
+            ("Overpayment caught (INR)", f"{m['detected_at_risk']:,.2f}"),
+            ("Manual effort (min)", f"{manual_total:,.0f}"),
+            ("With agents (min)", f"{assisted:,.0f}"),
+            ("=Time saved", f"{saved / manual_total:.0%}" if manual_total else "-"),
+        ], "Money and time", ("Item", "Figure")), unsafe_allow_html=True)
+        st.caption(f"Checked by {st.session_state.engine_name}. Effort figures use the sidebar "
+                   "assumptions; agent time is measured. Seeded overpayment in this batch: "
+                   f"INR {m['true_at_risk']:,.2f}.")
 
         ch1, ch2 = st.columns(2)
         dec = pd.DataFrame([{"Status": label(k), "Invoices": n} for k, n in counts.items()])
         ch1.markdown("**Decisions**")
-        ch1.altair_chart(alt.Chart(dec).mark_bar(cornerRadiusEnd=3).encode(
-            x=alt.X("Invoices:Q", title=None), y=alt.Y("Status:N", sort="-x", title=None),
+        ch1.altair_chart(alt.Chart(dec).mark_bar().encode(
+            x=alt.X("Invoices:Q", title=None, axis=alt.Axis(format="d", tickMinStep=1)),
+            y=alt.Y("Status:N", sort="-x", title=None),
             color=alt.Color("Status:N", legend=None, scale=alt.Scale(
                 domain=list(LABEL_COLOUR), range=list(LABEL_COLOUR.values())))).properties(height=200),
             width="stretch")
@@ -383,20 +377,20 @@ with tab_results:
         ch2.markdown("**Issues found**")
         if types:
             iss = pd.DataFrame([{"Issue": t, "Count": n} for t, n in types.items()])
-            ch2.altair_chart(alt.Chart(iss).mark_bar(cornerRadiusEnd=3, color=ui.INK).encode(
-                x=alt.X("Count:Q", title=None), y=alt.Y("Issue:N", sort="-x", title=None)
-            ).properties(height=200), width="stretch")
+            ch2.altair_chart(alt.Chart(iss).mark_bar(color=ui.BINDING).encode(
+                x=alt.X("Count:Q", title=None, axis=alt.Axis(format="d", tickMinStep=1)),
+                y=alt.Y("Issue:N", sort="-x", title=None, axis=alt.Axis(labelLimit=200))
+            ).properties(height=max(120, 28 * len(iss))), width="stretch")
 
-        st.markdown("#### All invoices")
+        st.markdown("#### Invoice register")
         options = [label(k) for k in (APPROVED, HOLD, REJECTED, PENDING)]
         pick = st.pills("Show", options, default=options, selection_mode="multi")
         df = results_df(sorted(res, key=lambda r: r["idx"]))
         df = df[df["Status"].isin(pick or [])]
         table(df)
-        st.download_button("Download as CSV", df.to_csv(index=False), "ap_results.csv", "text/csv",
-                           icon=":material/download:")
+        st.download_button("Download register (CSV)", df.to_csv(index=False), "ap_results.csv", "text/csv")
 
-        st.markdown("#### Look at one invoice")
+        st.markdown("#### Open one invoice")
         ordered = sorted(res, key=lambda r: r["idx"])
         r = st.selectbox("Invoice", ordered, label_visibility="collapsed",
                          format_func=lambda r: f"#{r['idx']:02d}  {r['invoice_no']}  {r['vendor']}  ({label(final(r))})")
@@ -416,16 +410,15 @@ with tab_upload:
             f"#{i['idx']:02d} {i['truth']['invoice_no']}  {i['truth']['vendor']}"
             + (f"  [{i['truth']['kind']}]" if reveal else "")))
         sc2.download_button("Download PDF", invoice_to_pdf(pick_inv["text"], pick_inv["truth"]["invoice_no"]),
-                            f"{pick_inv['truth']['invoice_no']}.pdf", "application/pdf",
-                            icon=":material/download:", width="stretch")
+                            f"{pick_inv['truth']['invoice_no']}.pdf", "application/pdf", width="stretch")
 
     files = st.file_uploader("Invoice PDFs", type=["pdf"], accept_multiple_files=True)
-    if files and st.button("Check uploaded invoices", type="primary", icon=":material/play_arrow:"):
+    if files and st.button("Check uploaded invoices", type="primary"):
         ctx = st.session_state.get("ctx")
         if ctx is None:
             llm, warn = get_llm("ollama" if engine.startswith("Ollama") else "mock", model)
             if warn:
-                st.warning(warn, icon=":material/warning:")
+                st.warning(warn)
             ctx = st.session_state.ctx = new_ctx(llm, batch, hitl)
         ctx.hitl = hitl
         uploads = st.session_state.setdefault("uploads", [])
@@ -448,7 +441,7 @@ with tab_upload:
 
 # --------------------------------------------------------------------------- tab: memory
 with tab_memory:
-    st.markdown("The Fraud Agent reads this memory and every review decision writes to it. Approved "
+    st.markdown("The vendor ledger is the agents' long-term memory. The Fraud Agent reads it and every review decision writes to it. Approved "
                 "totals extend a vendor's history, escalations raise its risk, and a reviewer-approved "
                 "bank change becomes the account on file.")
     st.dataframe(pd.DataFrame(memory.table()), width="stretch", hide_index=True)
