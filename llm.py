@@ -16,6 +16,26 @@ def template_explanation(p: dict) -> str:
     return f"{who}: {reasons}. Amount at risk: INR {p['at_risk']:,.2f}."
 
 
+def template_risk_note(p: dict) -> str:
+    """Fraud note without an LLM: list the signals behind the score."""
+    if not p["signals"]:
+        return "No fraud signals found."
+    parts = "; ".join(f"{s['detail']} (+{s['points']})" for s in p["signals"])
+    return f"Risk {p['risk_score']}/100 for {p['vendor']}: {parts}."
+
+
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(text: str) -> set:
+    return {n.replace(",", "").rstrip(".") for n in _NUM.findall(text)}
+
+
+def adds_numbers(out: str, facts: str) -> bool:
+    """True if the LLM wrote a number that is not in the facts (a likely hallucination)."""
+    return bool(_numbers(out) - _numbers(facts))
+
+
 class MockLLM:
     name = "mock (rule-based, no LLM)"
     can_extract = False
@@ -25,6 +45,9 @@ class MockLLM:
 
     def explain(self, payload: dict) -> str:
         return template_explanation(payload)
+
+    def explain_risk(self, payload: dict) -> str:
+        return template_risk_note(payload)
 
 
 class OllamaLLM:
@@ -63,6 +86,24 @@ class OllamaLLM:
         try:
             out = self.chat.invoke(prompt).content.strip()
             return re.sub(r"\s+", " ", out) or facts
+        except Exception:
+            return facts
+
+    def explain_risk(self, payload: dict) -> str:
+        facts = template_risk_note(payload)
+        if not payload["signals"]:
+            return facts                       # nothing to explain, skip the LLM call
+        prompt = (
+            "You are a fraud analyst in accounts payable. In 2 short sentences, tell a finance "
+            "reviewer why this invoice looks risky and what to verify before paying (for example, "
+            "call the vendor on a known number). Use only the facts below. Do not add new numbers.\n\n"
+            + facts
+        )
+        try:
+            out = re.sub(r"\s+", " ", self.chat.invoke(prompt).content.strip())
+            if not out or adds_numbers(out, facts):
+                return facts                   # guard: no invented figures reach the reviewer
+            return out
         except Exception:
             return facts
 

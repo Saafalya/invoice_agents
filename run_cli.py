@@ -44,6 +44,8 @@ if pending:
 for r in pending:
     print(f"\n{r['invoice_no']} from {r['vendor']}, INR {r['total']:,.2f}, risk {r['risk_score']}/100")
     print("  " + r["reason"])
+    if r["risk_signals"]:
+        print("  Fraud Agent: " + r["risk_note"])
     choice = ""
     while choice not in ("a", "r", "h"):
         choice = input("  decision [a/r/h]: ").strip().lower()[:1]

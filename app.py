@@ -120,6 +120,8 @@ def show_invoice(r):
         b.dataframe(pd.DataFrame(r["issues"]), width="stretch", hide_index=True)
     if r["risk_signals"]:
         b.markdown(f"**Fraud risk score: {r['risk_score']}/100**")
+        if r.get("risk_note"):
+            b.warning(f"Fraud Agent: {r['risk_note']}")
         b.dataframe(pd.DataFrame(r["risk_signals"]), width="stretch", hide_index=True)
     b.markdown("**Agent trace**")
     b.code("\n".join(f"{e['agent']}: {e['msg']}" for e in r["trace"]), language=None)

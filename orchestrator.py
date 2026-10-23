@@ -36,6 +36,7 @@ class State(TypedDict, total=False):
     reason: str
     risk_score: int
     risk_signals: list
+    risk_note: str
     final_decision: str
     reviewed_by: str
     review_note: str
@@ -179,6 +180,7 @@ def _to_result(inv: dict, item: dict, state: dict, thread_id: str = "") -> dict:
         "extract": ext.model_dump() if ext else None,
         "raw": inv["text"], "trace": state["log"], "truth": inv["truth"],
         "risk_score": state.get("risk_score", 0), "risk_signals": state.get("risk_signals", []),
+        "risk_note": state.get("risk_note", ""),
         "final_decision": state.get("final_decision"), "reviewed_by": state.get("reviewed_by", ""),
         "review_note": state.get("review_note", ""),
         "status": "PENDING_REVIEW" if paused else "DONE",
