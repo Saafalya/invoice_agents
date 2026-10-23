@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from config import (APPROVED, ESCALATED, HOLD, MAX_EXTRACT_ATTEMPTS, REJECTED, URGENT_DAYS,
                     VARIANCE_TOLERANCE)
-from tools import (decide, fraud_checks, parse_invoice, peek_header, three_way_match,
-                   validate_extraction)
+from tools import (decide, fraud_checks, grounding_problems, parse_invoice, peek_header,
+                   three_way_match, validate_extraction)
 
 EXPLAINED_BY = {"PRICE_MISMATCH", "QTY_EXCESS", "TAX_ERROR", "UNORDERED_ITEM", "DUPLICATE",
                 "NO_PO", "UNKNOWN_VENDOR", "VENDOR_MISMATCH", "LOOKALIKE_VENDOR"}
@@ -55,18 +55,29 @@ def extractor_agent(state, ctx):
 
 # --------------------------------------------------------------------------- Critic Agent (1)
 def critic_extract_agent(state, ctx):
-    name, ext = "Critic Agent", state.get("extract")
+    name, ext, raw = "Critic Agent", state.get("extract"), state["raw"]
     problems = ["extraction produced no result"] if ext is None else validate_extraction(ext)
-    if ext is not None and f"{ext.total:,.2f}" not in state["raw"] and f"{ext.total:.2f}" not in state["raw"]:
-        problems.append(f"extracted total {ext.total:,.2f} does not appear in the document")
-    if not problems:
-        return {"extract_ok": True, "critic_issues": [],
-                "log": [_log(name, "extraction PASSED arithmetic and format checks")]}
-    if state["attempt"] < MAX_EXTRACT_ATTEMPTS:
-        msg = f"extraction REJECTED ({problems[0]}) -> asking Extraction Agent to retry"
-    else:
-        msg = f"extraction REJECTED again ({problems[0]}) -> cannot trust data, escalating"
-    return {"extract_ok": False, "critic_issues": problems, "log": [_log(name, msg)]}
+    if ext is not None:
+        if f"{ext.total:,.2f}" not in raw and f"{ext.total:.2f}" not in raw:
+            problems.append(f"extracted total {ext.total:,.2f} does not appear in the document")
+        problems += grounding_problems(ext, raw)      # hard rule: no invented field values
+    retry = state["attempt"] < MAX_EXTRACT_ATTEMPTS
+    if problems:
+        msg = (f"extraction REJECTED ({problems[0]}) -> asking Extraction Agent to retry" if retry
+               else f"extraction REJECTED again ({problems[0]}) -> cannot trust data, escalating")
+        return {"extract_ok": False, "critic_issues": problems, "llm_review": [],
+                "log": [_log(name, msg)]}
+
+    # Rules passed. Ask the LLM for a second opinion (the mock returns nothing).
+    review = ctx.llm.review_extraction(raw, ext)
+    if review and retry:
+        return {"extract_ok": False, "critic_issues": review, "llm_review": review,
+                "log": [_log(name, f"rules passed, but LLM doubts it ({review[0]}) -> retrying with parser")]}
+    if review:      # advisory only: a model's doubt alone never escalates an invoice
+        return {"extract_ok": True, "critic_issues": [], "llm_review": review,
+                "log": [_log(name, f"extraction PASSED rules; LLM note for reviewer: {review[0]}")]}
+    return {"extract_ok": True, "critic_issues": [], "llm_review": [],
+            "log": [_log(name, "extraction PASSED arithmetic, format and grounding checks")]}
 
 
 def route_after_extract_critic(state) -> str:
@@ -141,7 +152,8 @@ def review_request(state) -> dict:
     return {"invoice_no": ext.invoice_no if ext else "(unreadable)",
             "vendor": ext.vendor if ext else "(unreadable)", "total": ext.total if ext else 0.0,
             "reason": state.get("reason", ""), "issues": state.get("issues", []),
-            "risk_score": state.get("risk_score", 0), "risk_note": state.get("risk_note", "")}
+            "risk_score": state.get("risk_score", 0), "risk_note": state.get("risk_note", ""),
+            "llm_review": state.get("llm_review", [])}
 
 
 def human_review_agent(state, ctx):

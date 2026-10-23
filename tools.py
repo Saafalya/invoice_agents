@@ -83,6 +83,22 @@ def validate_extraction(ext: InvoiceExtract) -> list[str]:
     return problems
 
 
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def grounding_problems(ext: InvoiceExtract, raw: str) -> list[str]:
+    """Every key text field must appear in the document, so an LLM cannot invent values.
+
+    Dates are skipped: an LLM may rightly rewrite 31/10/2026 as 2026-10-31.
+    """
+    doc = _norm(raw)
+    fields = {"invoice_no": ext.invoice_no, "vendor": ext.vendor, "po_number": ext.po_number,
+              "bank_account": ext.bank_account}
+    return [f"{name} '{value}' does not appear in the document"
+            for name, value in fields.items() if value and _norm(str(value)) not in doc]
+
+
 # --------------------------------------------------------------------------- matching
 def three_way_match(inv: InvoiceExtract, vendors, po_db, grn_db, seen: set):
     """Compare invoice vs PO vs GRN. Returns (issues, expected_total, amount_at_risk)."""
