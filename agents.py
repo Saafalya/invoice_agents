@@ -94,9 +94,11 @@ def fraud_agent(state, ctx):
     if {i["type"] for i in new} & WHOLE_PAYMENT_AT_RISK:
         at_risk = inv.total
     found = ", ".join(i["type"] for i in new) or "no fraud signals"
-    return {"issues": issues + new, "risk_score": score,
-            "risk_signals": [{"signal": k, "points": p, "detail": d} for k, p, d in signals],
-            "at_risk": at_risk,
+    risk_signals = [{"signal": k, "points": p, "detail": d} for k, p, d in signals]
+    # The rules set the score; the LLM only explains it in plain words for the reviewer.
+    note = ctx.llm.explain_risk({"vendor": inv.vendor, "risk_score": score, "signals": risk_signals})
+    return {"issues": issues + new, "risk_score": score, "risk_signals": risk_signals,
+            "risk_note": note, "at_risk": at_risk,
             "log": [_log("Fraud Agent", f"{found}; risk score {score}/100")]}
 
 
@@ -139,7 +141,7 @@ def review_request(state) -> dict:
     return {"invoice_no": ext.invoice_no if ext else "(unreadable)",
             "vendor": ext.vendor if ext else "(unreadable)", "total": ext.total if ext else 0.0,
             "reason": state.get("reason", ""), "issues": state.get("issues", []),
-            "risk_score": state.get("risk_score", 0)}
+            "risk_score": state.get("risk_score", 0), "risk_note": state.get("risk_note", "")}
 
 
 def human_review_agent(state, ctx):

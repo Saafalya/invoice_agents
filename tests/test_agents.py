@@ -99,3 +99,18 @@ def test_unreadable_upload_goes_to_a_human():
     ctx = Ctx(MockLLM(), b.vendors, b.po_db, b.grn_db, b.today, hitl=True)
     r = process_one("not an invoice at all", ctx, False)
     assert r["decision"] == "ESCALATED" and r["status"] == "PENDING_REVIEW"
+
+
+def test_fraud_agent_writes_a_risk_note():
+    _, _, res = run()
+    fraud = [r for r in res if r["truth"]["kind"] in {"LOOKALIKE_VENDOR", "BANK_CHANGE", "AMOUNT_SPIKE"}]
+    assert fraud and all(r["risk_note"].startswith("Risk ") for r in fraud)
+    clean = [r for r in res if not r["risk_signals"]]
+    assert all(r["risk_note"] == "No fraud signals found." for r in clean)
+
+
+def test_risk_note_guard_rejects_invented_numbers():
+    from llm import adds_numbers
+    facts = "Risk 70/100 for Acme: pay-to account 1234 differs from 9876 (+70)."
+    assert not adds_numbers("Bank account changed from 9876 to 1234; call Acme first.", facts)
+    assert adds_numbers("Acme has sent 5 risky invoices worth 2,50,000.", facts)
