@@ -175,3 +175,19 @@ def test_case_summary_falls_back_when_llm_invents_numbers():
     assert o.summarize_case(p) == template_case_summary(p)
     o.chat = N(invoke=lambda _: N(content="Problem: duplicate of INV-1.\nStake: 500.00\nCheck: was it paid?"))
     assert o.summarize_case(p).startswith("Problem: duplicate")
+
+
+def test_ollama_model_name_resolves_to_installed_tag():
+    from llm import resolve_model
+    have = ["gemma4:latest", "llama3.1:8b", "llama3.2:3b"]
+    assert resolve_model("llama3.2", have) == "llama3.2:3b"      # the bug a user hit
+    assert resolve_model("gemma4", have) == "gemma4:latest"
+    assert resolve_model("llama3.1:8b", have) == "llama3.1:8b"
+    assert resolve_model("qwen2.5", have) is None
+
+
+def test_get_llm_explains_when_ollama_is_down(monkeypatch):
+    import llm
+    monkeypatch.setattr(llm, "installed_models", lambda: None)
+    model, warn = llm.get_llm("ollama", "llama3.2")
+    assert isinstance(model, llm.MockLLM) and "not running" in warn

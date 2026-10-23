@@ -185,13 +185,48 @@ def parse_review(content: str) -> list:
     return out[:3]
 
 
+def resolve_model(model: str, installed: list) -> str | None:
+    """Match what the user typed to an installed model.
+
+    'llama3.2' means 'llama3.2:latest' to Ollama; if only 'llama3.2:3b' is installed, use that.
+    """
+    if model in installed:
+        return model
+    if ":" not in model:
+        if f"{model}:latest" in installed:
+            return f"{model}:latest"
+        tagged = sorted(m for m in installed if m.split(":")[0] == model)
+        if tagged:
+            return tagged[0]
+    return None
+
+
+def installed_models() -> list | None:
+    """Model names Ollama has downloaded, or None if Ollama is not running."""
+    try:
+        import ollama
+        return [m.model for m in ollama.list().models]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_llm(engine: str, model: str = "llama3.2"):
     """Return (llm, warning_or_None). Falls back to the mock if Ollama is unavailable."""
     if engine != "ollama":
         return MockLLM(), None
+    installed = installed_models()
+    if installed is None:
+        return MockLLM(), ("Ollama is not running, so the rule-based mode is used. Open the Ollama app "
+                           "(Start menu > Ollama) and check the batch again.")
+    name = resolve_model(model, installed)
+    if name is None:
+        have = ", ".join(installed) or "none"
+        return MockLLM(), (f"Ollama has no model called '{model}'. Installed: {have}. Type one of these "
+                           f"in the sidebar, or run 'ollama pull {model}'. Using the rule-based mode.")
     try:
-        llm = OllamaLLM(model)
+        llm = OllamaLLM(name)
         llm.ping()
         return llm, None
     except Exception as e:  # noqa: BLE001
-        return MockLLM(), f"Could not reach Ollama model '{model}' ({type(e).__name__}). Using the mock LLM."
+        return MockLLM(), (f"Ollama model '{name}' did not answer ({type(e).__name__}: {str(e)[:120]}). "
+                           "It may need more free memory; try a smaller model. Using the rule-based mode.")
