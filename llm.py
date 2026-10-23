@@ -24,6 +24,27 @@ def template_risk_note(p: dict) -> str:
     return f"Risk {p['risk_score']}/100 for {p['vendor']}: {parts}."
 
 
+CHECKS = {
+    "BANK_CHANGE": "call the vendor on the number in the vendor master (not the one on the invoice) "
+                   "to confirm the new bank account",
+    "LOOKALIKE_VENDOR": "confirm the sender really is the approved vendor, not an impersonator",
+    "DUPLICATE": "check whether the first copy of this invoice was already paid",
+    "AMOUNT_SPIKE": "ask the buyer whether this unusually large order is genuine",
+    "UNKNOWN_VENDOR": "check whether this vendor was ever onboarded",
+}
+
+
+def template_case_summary(p: dict) -> str:
+    """Case summary without an LLM: problem, stake, history, what to check."""
+    problems = "; ".join(i["detail"] for i in p["issues"]) or "extraction could not be validated"
+    hist = (f"{p['history'][0]} past approved invoices, largest INR {p['history'][2]:,.2f}"
+            if p["history"] else "no approved history")
+    checks = [CHECKS[t] for t in dict.fromkeys(i["type"] for i in p["issues"]) if t in CHECKS]
+    todo = "; ".join(checks) or "compare the invoice with the PO and goods receipt"
+    return (f"Problem: {problems}. Stake: INR {p['at_risk']:,.2f} at risk of INR {p['total']:,.2f}, "
+            f"risk score {p['risk_score']}/100. Vendor history: {hist}. Check before deciding: {todo}.")
+
+
 _NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
@@ -51,6 +72,9 @@ class MockLLM:
 
     def review_extraction(self, text: str, ext) -> list:
         return []                              # no LLM: the Critic relies on its rule checks
+
+    def summarize_case(self, payload: dict) -> str:
+        return template_case_summary(payload)
 
 
 class OllamaLLM:
@@ -124,6 +148,23 @@ class OllamaLLM:
             return parse_review(self.json_chat.invoke(prompt).content)
         except Exception:
             return []                          # model down or slow: rule checks still apply
+
+
+    def summarize_case(self, payload: dict) -> str:
+        """Brief for the human reviewer: problem, stake, what to check. No new numbers allowed."""
+        facts = template_case_summary(payload)
+        prompt = (
+            "You brief a finance manager who must approve, hold or reject an escalated invoice. "
+            "Write 3 short lines starting 'Problem:', 'Stake:' and 'Check:'. Use only the facts "
+            "below, keep every number exactly as written, and add no new numbers.\n\n" + facts
+        )
+        try:
+            out = self.chat.invoke(prompt).content.strip()
+            if not out or adds_numbers(out, facts):
+                return facts                   # guard: no invented figures reach the reviewer
+            return out
+        except Exception:
+            return facts
 
 
 FIELDS = set(InvoiceExtract.model_fields)

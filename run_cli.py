@@ -43,7 +43,7 @@ if pending:
     print(f"\n{len(pending)} invoice(s) paused for human review. Answer a=approve, r=reject, h=hold.")
 for r in pending:
     print(f"\n{r['invoice_no']} from {r['vendor']}, INR {r['total']:,.2f}, risk {r['risk_score']}/100")
-    print("  " + r["reason"])
+    print("  " + (r["case_summary"] or r["reason"]))
     if r["risk_signals"]:
         print("  Fraud Agent: " + r["risk_note"])
     choice = ""

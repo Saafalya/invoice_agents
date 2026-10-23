@@ -137,7 +137,14 @@ def decision_agent(state, ctx):
         "decision": decision, "issues": issues, "at_risk": at_risk,
         "invoice_no": ext.invoice_no if ext else "?", "total": ext.total if ext else 0.0,
     })
-    return {"decision": decision, "reason": reason, "at_risk": at_risk,
+    summary = ""
+    if decision == ESCALATED:           # only escalations reach a person, so only they get a brief
+        summary = ctx.llm.summarize_case({
+            "issues": issues, "at_risk": at_risk, "total": ext.total if ext else 0.0,
+            "risk_score": state.get("risk_score", 0),
+            "history": ctx.memory.stats(ext.vendor) if ext else None,
+        })
+    return {"decision": decision, "reason": reason, "at_risk": at_risk, "case_summary": summary,
             "log": [_log("Decision Agent", f"{decision} ({rule})")]}
 
 
@@ -153,7 +160,8 @@ def review_request(state) -> dict:
             "vendor": ext.vendor if ext else "(unreadable)", "total": ext.total if ext else 0.0,
             "reason": state.get("reason", ""), "issues": state.get("issues", []),
             "risk_score": state.get("risk_score", 0), "risk_note": state.get("risk_note", ""),
-            "llm_review": state.get("llm_review", [])}
+            "llm_review": state.get("llm_review", []),
+            "case_summary": state.get("case_summary", "")}
 
 
 def human_review_agent(state, ctx):
