@@ -1,12 +1,15 @@
 [theme]
 base = "light"
-primaryColor = "#2B59C3"
-backgroundColor = "#FBFCFA"
-secondaryBackgroundColor = "#F1F4F8"
-textColor = "#1B2A4A"
-borderColor = "#DDE3EA"
+primaryColor = "#2F5D46"
+backgroundColor = "#F3F6EE"
+secondaryBackgroundColor = "#E5ECDE"
+textColor = "#24314D"
+borderColor = "#C9D8BF"
 showWidgetBorder = true
-baseRadius = "6px"
+baseRadius = "3px"
 
 [client]
 toolbarMode = "minimal"
+
+[server]
+enableStaticServing = true
